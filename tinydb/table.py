@@ -551,15 +551,19 @@ class Table:
         """
 
         # Define the function that will perform the update
+        # Each document is copied before it is changed, so an exception leaves
+        # the storage's original documents untouched (see ``update``).
         def perform_update(fields, table, doc_id):
+            doc = copy.deepcopy(table[doc_id])
             if callable(fields):
                 # Update documents by calling the update function provided
-                # by the user
-                fields(table[doc_id])
+                # by the user on the copy
+                fields(doc)
             else:
                 # Update documents by setting all fields from the provided
-                # data
-                table[doc_id].update(fields)
+                # data on the copy
+                doc.update(fields)
+            table[doc_id] = doc
 
         # Perform the update operation for documents specified by a query
 
