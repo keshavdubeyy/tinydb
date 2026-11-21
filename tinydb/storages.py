@@ -152,9 +152,9 @@ class JSONStorage(Storage):
         except io.UnsupportedOperation:
             raise IOError('Cannot write to the database. Access mode is "{0}"'.format(self._mode))
 
-        # Ensure the file has been written
+        # Let the OS write the file in the background; calling fsync on
+        # every write made bulk inserts noticeably slower.
         self._handle.flush()
-        os.fsync(self._handle.fileno())
 
         # Remove data that is behind the new cursor in case the file has
         # gotten shorter
