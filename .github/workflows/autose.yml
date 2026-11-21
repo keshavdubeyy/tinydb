@@ -1,0 +1,184 @@
+# AutoSE: agentic SDLC pipeline (see ARCHITECTURE.md and the ADRs in the submission repo).
+# Trigger: label `autose` on an issue, or a maintainer comment `/autose`.
+# Stages 1-5 run in `build`; stage 6 (independent review) runs in `review` with a
+# read-only contents token. Nothing in this workflow ever merges a pull request.
+name: AutoSE
+
+run-name: >-
+  AutoSE #${{ github.event.issue.number || inputs.issue }}
+  ${{ inputs.start_from && format('({0}, round {1})', inputs.start_from, inputs.round) || '' }}
+
+on:
+  issues:
+    types: [labeled]
+  issue_comment:
+    types: [created]
+  workflow_dispatch:
+    inputs:
+      issue: { description: "Issue number", required: true }
+      start_from:
+        description: "Stage to start from"
+        type: choice
+        options: [requirements, design, implement, test, release, review]
+        default: requirements
+      round: { description: "Review round (0 = first build)", default: "0" }
+      mode:
+        description: "full = normal pipeline; review_only = only run the reviewer on a PR"
+        type: choice
+        options: [full, review_only]
+        default: full
+      pr: { description: "PR number (review / review_only)", default: "" }
+      variant:
+        description: "Reviewer variant (experiments only)"
+        type: choice
+        options: [default, same_model, with_spec]
+        default: default
+
+permissions: {}
+
+env:
+  PYTHONUNBUFFERED: "1"
+
+jobs:
+  gate:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'issues' && github.event.label.name == 'autose') ||
+      (github.event_name == 'issue_comment' && startsWith(github.event.comment.body, '/autose'))
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+      actions: write        # list / cancel other AutoSE runs for /autose restart
+    outputs:
+      proceed: ${{ steps.g.outputs.proceed }}
+      issue: ${{ steps.g.outputs.issue }}
+      start_from: ${{ steps.g.outputs.start_from }}
+      round: ${{ steps.g.outputs.round }}
+      mode: ${{ steps.g.outputs.mode }}
+      pr: ${{ steps.g.outputs.pr }}
+      variant: ${{ steps.g.outputs.variant }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false, sparse-checkout: .autose }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - id: g
+        run: python .autose/gate.py
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+
+  build:
+    needs: gate
+    if: >-
+      needs.gate.outputs.proceed == 'true' && needs.gate.outputs.mode == 'full' &&
+      needs.gate.outputs.start_from != 'review'
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    concurrency:
+      group: autose-build-${{ needs.gate.outputs.issue }}
+      cancel-in-progress: false
+    permissions:
+      contents: write       # push the autose/issue-N branch (never master: it is protected)
+      pull-requests: write  # open / update the PR
+      issues: write         # status comment and escalation report
+      actions: write        # dispatch CI on the bot branch, download earlier artifacts
+    outputs:
+      review: ${{ steps.p.outputs.review }}
+      pr: ${{ steps.p.outputs.pr }}
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false, fetch-depth: 0 }
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install
+        run: |
+          python -m pip install --quiet --upgrade pip
+          python -m pip install --quiet -e . pytest pytest-cov claude-agent-sdk==0.2.187
+      - name: Keep the pipeline code out of the agents' reach
+        run: |
+          cp -r .autose "$RUNNER_TEMP/autose"
+          echo "AUTOSE_OUT=$RUNNER_TEMP/autose_out" >> "$GITHUB_ENV"
+      - name: Configure git identity
+        run: |
+          git config user.name "autose-bot"
+          git config user.email "autose-bot@users.noreply.github.com"
+      - id: p
+        name: Stages 1-5 (requirements, design, implementation, testing, release)
+        run: python "$RUNNER_TEMP/autose/orchestrator.py"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AUTOSE_REPO_DIR: ${{ github.workspace }}
+          AUTOSE_ISSUE: ${{ needs.gate.outputs.issue }}
+          AUTOSE_START_FROM: ${{ needs.gate.outputs.start_from }}
+          AUTOSE_ROUND: ${{ needs.gate.outputs.round }}
+      - name: Upload stage artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autose-build
+          path: ${{ runner.temp }}/autose_out
+          overwrite: true
+          include-hidden-files: true
+          if-no-files-found: warn
+
+  review:
+    needs: [gate, build]
+    if: >-
+      always() && needs.gate.outputs.proceed == 'true' &&
+      (needs.build.outputs.review == 'true' || needs.gate.outputs.start_from == 'review' ||
+       needs.gate.outputs.mode == 'review_only')
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    concurrency:
+      group: autose-review-${{ needs.gate.outputs.issue }}
+      cancel-in-progress: false
+    permissions:
+      contents: read        # the reviewer cannot push
+      pull-requests: write  # post the review comment
+      issues: write         # update the status comment
+      actions: write        # start the next round (workflow_dispatch), read artifacts
+    steps:
+      - uses: actions/checkout@v4
+        with: { persist-credentials: false }
+      - name: Keep the pipeline code out of the reviewer's reach
+        run: |
+          cp -r .autose "$RUNNER_TEMP/autose"
+          echo "AUTOSE_OUT=$RUNNER_TEMP/autose_out" >> "$GITHUB_ENV"
+      - name: Check out the PR head (read-only)
+        run: |
+          PR="${{ needs.build.outputs.pr || needs.gate.outputs.pr }}"
+          echo "AUTOSE_PR=$PR" >> "$GITHUB_ENV"
+          gh pr checkout "$PR" --repo "$GITHUB_REPOSITORY" --force
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Install
+        run: |
+          python -m pip install --quiet --upgrade pip
+          python -m pip install --quiet -e . pytest pytest-cov claude-agent-sdk==0.2.187
+      - name: Stage 6 (independent review)
+        run: python "$RUNNER_TEMP/autose/review.py"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          AUTOSE_REPO_DIR: ${{ github.workspace }}
+          AUTOSE_ISSUE: ${{ needs.gate.outputs.issue }}
+          AUTOSE_MODE: ${{ needs.gate.outputs.mode }}
+          AUTOSE_VARIANT: ${{ needs.gate.outputs.variant }}
+          AUTOSE_ROUND: ${{ needs.gate.outputs.round }}
+      - name: Upload review artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: autose-review
+          path: ${{ runner.temp }}/autose_out
+          overwrite: true
+          if-no-files-found: warn

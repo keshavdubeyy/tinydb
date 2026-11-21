@@ -2,6 +2,7 @@ name: Python CI
 
 on:
   push: {}
+  workflow_dispatch: {}   # lets AutoSE start CI on its own branch (GITHUB_TOKEN pushes do not trigger push)
   pull_request:
     branches: [ master ]
 
