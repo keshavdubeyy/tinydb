@@ -382,7 +382,8 @@ class Pipeline:
         self.st.status = "stopped"
         self.st.note(self.st.stage, "STOPPED", reason)
         log = "\n".join(f"{e['t']} [{e['stage']}] {e['event']}: {e['detail']}" for e in self.st.log)
-        log += f"\n\nStop reason: {reason}"
+        log += (f"\n\nStop reason: {reason}\nIssue budget: ${ISSUE_BUDGET_USD:.2f} for all rounds; "
+                f"spent so far: ${self.st.cost_usd:.3f}. (Per-call limits are not the issue budget.)")
         report = ""
         try:
             r = self.agent_fn("You write factual hand-over reports.", prompt("escalation.md", LOG=log),

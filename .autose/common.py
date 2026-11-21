@@ -231,5 +231,28 @@ def comment(issue: int, body: str) -> None:
     gh(["api", "-X", "POST", f"repos/{REPO}/issues/{issue}/comments", "--input", str(p)], check=False)
 
 
+TRUSTED_ASSOCIATIONS = {"OWNER", "MEMBER", "COLLABORATOR"}
+
+
+def maintainer_clarifications(comments: list[dict[str, Any]]) -> str:
+    """Comments by maintainers become part of the issue (ADR-010/012). Comments from
+    anyone else are left out, so a stranger cannot add instructions to the agents' input."""
+    keep = []
+    for c in comments:
+        body = (c.get("body") or "").strip()
+        if (c.get("author_association") in TRUSTED_ASSOCIATIONS
+                and (c.get("user") or {}).get("type") != "Bot"
+                and body and not body.startswith("/autose") and STATUS_MARK not in body):
+            keep.append(f"- @{c['user']['login']}: {body}")
+    return ("\n\n---\nClarifications from maintainers (oldest first):\n" + "\n".join(keep)) if keep else ""
+
+
 def fetch_issue(issue: int) -> dict[str, Any]:
-    return json.loads(gh(["issue", "view", str(issue), "--json", "title,body,author,number"]))
+    data = json.loads(gh(["issue", "view", str(issue), "--json", "title,body,author,number"]))
+    raw = gh(["api", "--paginate", f"repos/{REPO}/issues/{issue}/comments"], check=False) or "[]"
+    try:
+        comments = json.loads(raw.replace("][", ","))
+    except json.JSONDecodeError:
+        comments = []
+    data["body"] = (data.get("body") or "") + maintainer_clarifications(comments)
+    return data
