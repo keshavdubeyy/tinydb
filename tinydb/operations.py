@@ -18,7 +18,8 @@ def delete(field: str) -> Callable[[MutableMapping], None]:
     Delete a given field from the document.
     """
     def transform(doc: MutableMapping):
-        del doc[field]
+        # Documents without the field are left as they are.
+        doc.pop(field, None)
 
     return transform
 
@@ -30,7 +31,11 @@ def add(field: str, n: Union[int, float, str]) -> Callable[[MutableMapping], Non
     Also works for strings (concatenation), matching the documented behavior.
     """
     def transform(doc: MutableMapping):
-        doc[field] += n
+        # A missing field starts from ``n`` (as if it were 0, or '' for strings).
+        if field in doc:
+            doc[field] += n
+        else:
+            doc[field] = n
 
     return transform
 
@@ -40,7 +45,8 @@ def subtract(field: str, n: Union[int, float]) -> Callable[[MutableMapping], Non
     Subtract ``n`` to a given field in the document.
     """
     def transform(doc: MutableMapping):
-        doc[field] -= n
+        # A missing field counts as 0.
+        doc[field] = doc.get(field, 0) - n
 
     return transform
 
@@ -60,7 +66,8 @@ def increment(field: str) -> Callable[[MutableMapping], None]:
     Increment a given field in the document by 1.
     """
     def transform(doc: MutableMapping):
-        doc[field] += 1
+        # A missing field counts as 0.
+        doc[field] = doc.get(field, 0) + 1
 
     return transform
 
@@ -70,6 +77,7 @@ def decrement(field: str) -> Callable[[MutableMapping], None]:
     Decrement a given field in the document by 1.
     """
     def transform(doc: MutableMapping):
-        doc[field] -= 1
+        # A missing field counts as 0.
+        doc[field] = doc.get(field, 0) - 1
 
     return transform
