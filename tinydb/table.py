@@ -706,12 +706,18 @@ class Table:
         # Reset document ID counter
         self._next_id = None
 
-    def count(self, cond: QueryLike) -> int:
+    def count(self, cond: Optional[QueryLike] = None) -> int:
         """
         Count the documents matching a query.
 
-        :param cond: the condition use
+        If no condition is given, the number of all documents in the table
+        is returned (the same as ``len(table)``).
+
+        :param cond: the condition use, or ``None`` to count all documents
         """
+
+        if cond is None:
+            return len(self)
 
         return len(self.search(cond))
 
