@@ -111,6 +111,8 @@ def main() -> int:
         if src:
             gh(["run", "download", str(src), "-n", "autose-build", "-D", str(inp / "b")], check=False)
         spec = inp / "b" / "spec.md"
+        if not spec.exists():    # seeded PRs have no pipeline run; their specs live with the pipeline code
+            spec = Path(__file__).resolve().parent / "experiments" / "specs" / f"pr-{pr}.md"
         if spec.exists():
             (inp / "spec.md").write_text(spec.read_text())
             system += f"\n\nExperiment variant: you may also read the pipeline's spec at `{inp / 'spec.md'}`."
