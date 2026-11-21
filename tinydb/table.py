@@ -246,9 +246,13 @@ class Table:
 
         return list(iter(self))
 
-    def search(self, cond: QueryLike) -> list[Document]:
+    def search(self, cond: QueryLike,
+               limit: Optional[int] = None) -> list[Document]:
         """
         Search for all documents matching a 'where' cond.
+
+        If ``limit`` is given, at most ``limit`` matching documents are
+        returned, in the usual order.
 
         Note: a repeated search with the same ``cond`` is served from an
         internal cache. The returned list is a fresh copy, but its
@@ -257,14 +261,18 @@ class Table:
         what a later identical search returns.
 
         :param cond: the condition to check against
+        :param limit: the maximum number of documents to return
         :returns: list of matching documents
         """
+
+        if limit is not None and limit < 0:
+            raise ValueError('limit must not be negative')
 
         # First, we check the query cache to see if it has results for this
         # query
         cached_results = self._query_cache.get(cond)
         if cached_results is not None:
-            return cached_results[:]
+            return cached_results[:limit]
 
         # Perform the search by applying the query to all documents.
         # Then, only if the document matches the query, convert it
@@ -274,6 +282,9 @@ class Table:
             for doc_id, doc in self._read_table().items()
             if cond(doc)
         ]
+
+        if limit is not None:
+            docs = docs[:limit]
 
         # Only cache cacheable queries.
         #
