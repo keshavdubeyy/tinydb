@@ -32,7 +32,7 @@ def add(field: str, n: Union[int, float, str]) -> Callable[[MutableMapping], Non
     """
     def transform(doc: MutableMapping):
         if field not in doc:
-            doc[field] = 0 + n
+            doc[field] = 0 + n  # type: ignore[operator]
         else:
             doc[field] += n
 
