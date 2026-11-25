@@ -3,6 +3,7 @@ This module implements tables, the central place for accessing and manipulating
 data in TinyDB.
 """
 
+import copy
 from collections.abc import Callable, Iterable, Iterator, Mapping, MutableMapping
 from typing import (
     NoReturn,
@@ -445,15 +446,23 @@ class Table:
         """
 
         # Define the function that will perform the update
+        # Each document is updated on a copy that replaces the original only
+        # when the update succeeded. ``_update_table`` writes back nothing if
+        # the updater raises, so a failure part-way leaves every document as
+        # it was (also for MemoryStorage, which hands out its live data).
         if callable(fields):
             def perform_update(table, doc_id):
                 # Update documents by calling the update function provided by
                 # the user
-                fields(table[doc_id])
+                doc = copy.deepcopy(table[doc_id])
+                fields(doc)
+                table[doc_id] = doc
         else:
             def perform_update(table, doc_id):
                 # Update documents by setting all fields from the provided data
-                table[doc_id].update(fields)
+                doc = copy.deepcopy(table[doc_id])
+                doc.update(fields)
+                table[doc_id] = doc
 
         if doc_ids is not None:
             # Perform the update operation for documents specified by a list
@@ -542,14 +551,17 @@ class Table:
 
         # Define the function that will perform the update
         def perform_update(fields, table, doc_id):
+            # Work on a copy so a failure part-way changes nothing (see update)
+            doc = copy.deepcopy(table[doc_id])
             if callable(fields):
                 # Update documents by calling the update function provided
                 # by the user
-                fields(table[doc_id])
+                fields(doc)
             else:
                 # Update documents by setting all fields from the provided
                 # data
-                table[doc_id].update(fields)
+                doc.update(fields)
+            table[doc_id] = doc
 
         # Perform the update operation for documents specified by a query
 
